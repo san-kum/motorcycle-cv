@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hello World</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Motorcyle driving analysis</h1>
+        <p>Real-time feedback on riding technique</p>
+      </header>
+
+      <main>
+        <div class="video-section">
+          <div class="video-container">
+            <video id="videoElement">autoplay muted playsinline></video>
+            <canvas id="overlayCanvas"></canvas>
+          </div>
+          <div class="controls">
+            <button id="startBtn">Start Analysis</button>
+            <button id="stopBtn">Stop Analysis</button>
+            <button id="recordBtn">Start Recording</button>
+          </div>
+        </div>
+
+        <div class="feedback-section">
+          <div class="status-panel">
+            <h3>System Status</h3>
+            <div id="connectionStatus" class="status-disconnected">
+              Disconnected
+            </div>
+            <div id="processingStatus" class="status">Ready</div>
+          </div>
+          <div class="feedback-panel">
+            <h3>Riding Analysis</h3>
+            <div class="metric">
+              <label>Overall Score:</label>
+              <span id="overallScore">--</span>
+            </div>
+            <div class="metric">
+              <label>Posture:</label>
+              <span id="posture">--</span>
+            </div>
+            <div class="metric">
+              <label>Lane Position:</label>
+              <span id="laneScore">--</span>
+            </div>
+            <div class="metric">
+              <label>Speed Appropriateness:</label>
+              <span id="speedScore">--</span>
+            </div>
+          </div>
+
+          <div class="feedback-details">
+            <h3>Real-time Feedback</h3>
+            <div id="feedbackList" class="feedback-messages">
+              <p class="no-feedback">Start analysis to receieve feedback</p>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>

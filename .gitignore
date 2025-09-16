@@ -7,9 +7,10 @@
 *.dll
 *.so
 *.dylib
-
+*.txt
 # Test binary, built with `go test -c`
 *.test
+*.sum
 
 # Code coverage profiles and other test artifacts
 *.out

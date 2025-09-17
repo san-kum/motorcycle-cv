@@ -26,7 +26,7 @@ type ProcessorStats struct {
 	TotalProcessed        int64     `json:"total_processed"`
 	SuccessfullyProcessed int64     `json:"successfully_processed"`
 	FailedProcessed       int64     `json:"failed_processed"`
-	AverageLatency        float64   `json:"average_latency"`
+	AverageLatency        float64   `json:"average_latency_ms"`
 	QueueSize             int       `json:"queue_size"`
 	ActiveWorkers         int       `json:"active_workers"`
 }
@@ -34,7 +34,7 @@ type ProcessorStats struct {
 type ProcessorConfig struct {
 	MaxQueueSize        int     `json:"max_queue_size"`
 	MaxWorkers          int     `json:"max_workers"`
-	ProcessingTimeout   int     `json:"processing_timeout"`
+	ProcessingTimeout   int     `json:"processing_timeout_seconds"`
 	SkipSimilarFrames   bool    `json:"skip_similar_frames"`
 	SimilarityThreshold float64 `json:"similarity_threshold"`
 }
@@ -45,8 +45,8 @@ type VideoJob struct {
 	Status    string                  `json:"status"`
 	Progress  float64                 `json:"progress"`
 	StartTime time.Time               `json:"start_time"`
-	Results   []models.AnalysisResult `json:"results"`
-	Error     string                  `json:"error"`
+	Results   []models.AnalysisResult `json:"results,omitempty"`
+	Error     string                  `json:"error,omitempty"`
 }
 
 func NewFrameProcessor(mlClient *ml.Client, logger *zap.Logger) *FrameProcessor {
@@ -57,6 +57,7 @@ func NewFrameProcessor(mlClient *ml.Client, logger *zap.Logger) *FrameProcessor 
 		SkipSimilarFrames:   true,
 		SimilarityThreshold: 0.95,
 	}
+
 	stats := &ProcessorStats{
 		StartTime:     time.Now(),
 		ActiveWorkers: config.MaxWorkers,
@@ -71,6 +72,7 @@ func NewFrameProcessor(mlClient *ml.Client, logger *zap.Logger) *FrameProcessor 
 	}
 
 	processor.queue = NewProcessingQueue(config.MaxQueueSize, config.MaxWorkers, processor.processFrame)
+
 	return processor
 }
 
@@ -79,19 +81,21 @@ func (fp *FrameProcessor) ProcessFrame(request *models.FrameRequest) (*models.An
 	fp.stats.TotalProcessed++
 
 	if fp.config.SkipSimilarFrames && fp.isSimilarFrame(request.ImageData) {
-		fp.logger.Debug("skipping similar frame")
+		fp.logger.Debug("Skipping similar frame")
 		return fp.getCachedResult(), nil
 	}
+
 	resultChan := make(chan *ProcessingResult, 1)
 
-	QueueItem := &QueueItem{
+	queueItem := &QueueItem{
 		Request:    request,
 		ResultChan: resultChan,
 		StartTime:  startTime,
 	}
-	if !fp.queue.Enqueue(QueueItem) {
+
+	if !fp.queue.Enqueue(queueItem) {
 		fp.stats.FailedProcessed++
-		return nil, fmt.Errorf("processing queue full")
+		return nil, fmt.Errorf("processing queue full, try again later")
 	}
 
 	select {
@@ -100,6 +104,7 @@ func (fp *FrameProcessor) ProcessFrame(request *models.FrameRequest) (*models.An
 			fp.stats.FailedProcessed++
 			return nil, result.Error
 		}
+
 		latency := time.Since(startTime)
 		fp.updateLatencyStats(latency)
 		fp.stats.SuccessfullyProcessed++
@@ -121,6 +126,7 @@ func (fp *FrameProcessor) processFrame(item *QueueItem) {
 			}
 		}
 	}()
+
 	analysis, err := fp.mlClient.AnalyzeFrame(item.Request)
 	if err != nil {
 		fp.logger.Error("ML analysis failed", zap.Error(err))
@@ -128,15 +134,30 @@ func (fp *FrameProcessor) processFrame(item *QueueItem) {
 		return
 	}
 
-	feedback := fp.generateFeedback(analysis)
-	analysis.Feedback = feedback
+	if analysis != nil {
+		feedback := fp.generateFeedback(analysis)
+		analysis.Feedback = feedback
+	} else {
+		analysis = &models.AnalysisResult{
+			OverallScore: 50,
+			PostureScore: 50,
+			LaneScore:    50,
+			SpeedScore:   50,
+			Feedback:     []models.Feedback{},
+			Timestamp:    time.Now().Unix(),
+		}
+	}
 
 	fp.cacheResult(item.Request.ImageData, analysis)
-	item.ResultChan <- &ProcessingResult{Analysis: analysis}
 
+	item.ResultChan <- &ProcessingResult{Analysis: analysis}
 }
 
 func (fp *FrameProcessor) generateFeedback(analysis *models.AnalysisResult) []models.Feedback {
+	if analysis == nil {
+		return []models.Feedback{}
+	}
+
 	var feedback []models.Feedback
 
 	if analysis.PostureScore < 70 {
@@ -214,10 +235,15 @@ func (fp *FrameProcessor) GetJobStatus(jobID string) (*VideoJob, error) {
 
 func (fp *FrameProcessor) processVideo(job *VideoJob, videoData []byte) {
 	// TODO: Implement video frame extraction and batch processing
+	// This would involve:
+	// 1. Extract frames from video using ffmpeg or similar
+	// 2. Process each frame through the ML pipeline
+	// 3. Aggregate results and generate comprehensive feedback
+	// 4. Update job status and progress
 
 	fp.logger.Info("Video processing started", zap.String("job_id", job.ID))
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(2 * time.Second) 
 
 	fp.mutex.Lock()
 	job.Status = "completed"
@@ -246,7 +272,7 @@ func (fp *FrameProcessor) GetStats() *ProcessorStats {
 	fp.mutex.RLock()
 	defer fp.mutex.RUnlock()
 
-	stats := *fp.stats
+	stats := *fp.stats // Create a copy
 	stats.QueueSize = fp.queue.Size()
 	return &stats
 }

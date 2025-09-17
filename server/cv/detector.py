@@ -7,7 +7,6 @@ import cv2
 import torch
 from ultralytics import YOLO
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -36,16 +35,20 @@ class ObjectDetector:
             "speed limit",
             "crosswalk",
         }
+
         self._load_model(model_path)
         logger.info(f"ObjectDetector initialized with {model_path} on {device}")
 
     def _load_model(self, model_path: str):
         try:
             self.model = YOLO(model_path)
-            self.model.to(self.device)
+            if torch.cuda.is_available() and self.device == "cuda":
+                self.model.to(self.device)
+
             dummy_input = np.zeros((640, 640, 3), dtype=np.uint8)
             _ = self.model.predict(dummy_input, verbose=False)
-            logger.info("YOLOv8 model loaded")
+
+            logger.info("YOLOv8 model loaded and warmed up successfully")
 
         except Exception as e:
             logger.error(f"Failed to load YOLOv8 model: {e}")
@@ -94,9 +97,11 @@ class ObjectDetector:
             results = self.model.predict(
                 image, conf=self.confidence_threshold, verbose=False, device=self.device
             )
+
             detections = []
             if results and len(results) > 0:
                 result = results[0]
+
                 if result.boxes is not None:
                     boxes = result.boxes.cpu().numpy()
 
@@ -130,10 +135,11 @@ class ObjectDetector:
             logger.error(f"Object detection failed: {e}")
             return []
 
-    def detect_motorcyle_and_rider(
+    def detect_motorcycle_and_rider(
         self, image: np.ndarray
     ) -> Tuple[Optional[Dict], Optional[Dict]]:
         all_detections = self.detect_objects(image)
+
         motorcycle_detection = None
         rider_detection = None
 
@@ -145,6 +151,7 @@ class ObjectDetector:
 
             if motorcycle_detection and rider_detection:
                 break
+
         return motorcycle_detection, rider_detection
 
     def analyze_traffic_density(self, detections: List[Dict]) -> Dict[str, Any]:
@@ -153,6 +160,7 @@ class ObjectDetector:
 
         total_vehicles = len(vehicles)
         vehicle_distribution = {}
+
         for vehicle in vehicles:
             class_name = vehicle["class_name"]
             vehicle_distribution[class_name] = (
@@ -190,11 +198,15 @@ class ObjectDetector:
 
         largest_area = max(vehicle["area"] for vehicle in vehicles)
 
-        estimated_distance = max(10.0, 100.0 / (largest_area / 10000.0))
-        return min(estimated_distance, 200.0)
+        estimated_distance = max(
+            10.0, 100.0 / (largest_area / 10000.0)
+        )  # Rough approximation
+
+        return min(estimated_distance, 200.0)  # Cap at 200 meters
 
     def detect_road_infrastructure(self, image: np.ndarray) -> Dict[str, List[Dict]]:
         detections = self.detect_objects(image)
+
         infrastructure = {
             "traffic_lights": [],
             "road_signs": [],

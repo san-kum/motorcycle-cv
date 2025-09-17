@@ -22,7 +22,7 @@ type QueueItem struct {
 	Request    *models.FrameRequest
 	ResultChan chan *ProcessingResult
 	StartTime  time.Time
-	Priority   int
+	Priority   int // Higher values = higher priority
 }
 
 type ProcessingResult struct {
@@ -43,6 +43,7 @@ func NewProcessingQueue(queueSize, workers int, workerFunc func(*QueueItem)) *Pr
 		queue.wg.Add(1)
 		go queue.worker(i)
 	}
+
 	return queue
 }
 
@@ -64,6 +65,7 @@ func (pq *ProcessingQueue) worker(id int) {
 							}
 						}
 					}()
+
 					pq.workerFunc(item)
 				}()
 			}
@@ -80,6 +82,7 @@ func (pq *ProcessingQueue) Enqueue(item *QueueItem) bool {
 		return false
 	}
 	pq.mutex.RUnlock()
+
 	select {
 	case pq.items <- item:
 		return true
@@ -127,10 +130,9 @@ func (pq *ProcessingQueue) Shutdown(timeout time.Duration) error {
 	case <-done:
 		close(pq.items)
 		return nil
-
 	case <-time.After(timeout):
 		close(pq.items)
-		return fmt.Errorf("queue shutdown timed out")
+		return fmt.Errorf("shutdown timeout exceeded")
 	}
 }
 
@@ -146,7 +148,7 @@ func (pq *ProcessingQueue) DrainQueue() int {
 			if item != nil {
 				select {
 				case item.ResultChan <- &ProcessingResult{
-					Error: fmt.Errorf("processing cancelled"),
+					Error: fmt.Errorf("processing cancelled - queue shutting down"),
 				}:
 				default:
 				}
@@ -202,6 +204,7 @@ func (pq *PriorityQueue) Push(item *QueueItem) {
 			break
 		}
 	}
+
 	if !inserted {
 		pq.items = append(pq.items, item)
 	}

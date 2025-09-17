@@ -23,7 +23,7 @@ type WebSocketHandler struct {
 type ClientMessage struct {
 	Type      string `json:"type"`
 	Data      string `json:"data"`
-	Timestamp int64  `json: "timestamp"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 type ServerMessage struct {

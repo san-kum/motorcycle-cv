@@ -16,17 +16,21 @@ import flask
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
+from detector import ObjectDetector
+from analyzer import RidingAnalyzer
+from models.pose_estimator import PoseEstimator
+from models.scene_analyzer import SceneAnalyzer
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[logging.FileHandler("ml_service.log"), logging.StreamHandler()],
 )
-
 logger = logging.getLogger(__name__)
 
 
 class MLService:
+
     def __init__(self):
         self.device = self._get_optimal_device()
         logger.info(f"Using device: {self.device}")
@@ -38,24 +42,25 @@ class MLService:
 
         self.stats = {
             "total_requests": 0,
-            "successfull_analyses": 0,
+            "successful_analyses": 0,
             "failed_analyses": 0,
             "average_processing_time": 0.0,
             "model_versions": self._get_model_versions(),
         }
 
-        logger.info("ML service initialized successfully")
+        logger.info("ML Service initialized successfully")
 
     def _get_optimal_device(self) -> str:
         if torch.cuda.is_available():
             device = "cuda"
             logger.info(f"CUDA available: {torch.cuda.get_device_name(0)}")
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            device = "mps"  # apple
-            logger.info(f"Using apple metal performance shaders")
+            device = "mps"
+            logger.info("Using Apple Metal Performance Shaders")
         else:
             device = "cpu"
             logger.info("Using CPU for inference")
+
         return device
 
     def _get_model_versions(self) -> Dict[str, str]:
@@ -67,16 +72,14 @@ class MLService:
             "service_version": "1.0.0",
         }
 
-    def analyze_frame(
-        self, image_data: bytes, config: Dict[str, Any] = None  # type: ignore
-    ) -> Dict[str, Any]:
+    def analyze_frame(self, image_data: bytes, config: Dict[str, Any] = None) -> Dict[str, Any]:  # type: ignore
         start_time = time.time()
         self.stats["total_requests"] += 1
 
         try:
             image = self._decode_image(image_data)
             if image is None:
-                raise ValueError("failed to decode image data")
+                raise ValueError("Failed to decode image data")
 
             detections = self.object_detector.detect_objects(image)
             pose_keypoints = self.pose_estimator.estimate_pose(image)
@@ -86,7 +89,9 @@ class MLService:
                 image, detections, pose_keypoints, scene_analysis
             )
 
-            processing_time = (time.time() - start_time) * 1000
+            processing_time = (
+                time.time() - start_time
+            ) * 1000  # Convert to milliseconds
             self._update_performance_stats(processing_time)
 
             response = {
@@ -95,7 +100,7 @@ class MLService:
                 "lane_score": analysis_results["lane_score"],
                 "speed_score": analysis_results["speed_score"],
                 "detections": self._format_detections(detections),
-                "pose_keypoints": self._frame_pose_keypoints(pose_keypoints),
+                "pose_keypoints": self._format_pose_keypoints(pose_keypoints),
                 "scene_analysis": scene_analysis,
                 "processing_time": processing_time,
                 "model_version": self.stats["model_versions"]["service_version"],
@@ -103,6 +108,7 @@ class MLService:
 
             self.stats["successful_analyses"] += 1
             logger.debug(f"Frame analyzed successfully in {processing_time:.2f}ms")
+
             return response
 
         except Exception as e:
@@ -117,6 +123,7 @@ class MLService:
                 image_data = base64.b64decode(image_data)
 
             nparr = np.frombuffer(image_data, np.uint8)
+
             image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
             if image is None:
@@ -129,7 +136,7 @@ class MLService:
             logger.error(f"Image decoding failed: {e}")
             return None
 
-    def _format_detections(self, detections: List[Dict]) -> List[Dict]:  # type: ignore
+    def _format_detections(self, detections: List[Dict]) -> List[Dict]:
         formatted = []
         for det in detections:
             formatted.append(
@@ -145,11 +152,10 @@ class MLService:
                     "track_id": det.get("track_id", -1),
                 }
             )
-            return formatted
+        return formatted
 
-    def _frame_pose_keypoints(self, pose_results: Dict) -> List[Dict]:  # type: ignore
+    def _format_pose_keypoints(self, pose_results: Dict) -> List[Dict]:
         keypoints = []
-
         if pose_results and "landmarks" in pose_results:
             for landmark_name, landmark_data in pose_results["landmarks"].items():
                 keypoints.append(
@@ -161,7 +167,6 @@ class MLService:
                         "visible": landmark_data.get("visible", True),
                     }
                 )
-
         return keypoints
 
     def _update_performance_stats(self, processing_time: float):
@@ -179,7 +184,7 @@ class MLService:
             "status": "healthy",
             "device": self.device,
             "models_loaded": True,
-            "stats": self.stats,
+            "stats": dict(self.stats),
             "memory_usage": self._get_memory_usage(),
             "gpu_usage": self._get_gpu_usage() if self.device == "cuda" else None,
         }
@@ -191,14 +196,15 @@ class MLService:
         memory_info = process.memory_info()
 
         return {
-            "rss_mb": memory_info.rss / 1024 / 1024,
-            "vms_mb": memory_info.rss / 1024 / 1024,
+            "rss_mb": memory_info.rss / 1024 / 1024,  # Resident Set Size
+            "vms_mb": memory_info.vms / 1024 / 1024,  # Virtual Memory Size
             "percent": process.memory_percent(),
         }
 
     def _get_gpu_usage(self) -> Optional[Dict[str, float]]:
         if not torch.cuda.is_available():
             return None
+
         try:
             gpu_memory = torch.cuda.memory_stats()
             return {
@@ -225,12 +231,11 @@ ml_service = None
 
 def initialize_ml_service():
     global ml_service
-
     try:
         ml_service = MLService()
-        logger.info("ML service ready for requests")
+        logger.info("ML Service ready for requests")
     except Exception as e:
-        logger.error(f"failed to initialize ML service: {e}")
+        logger.error(f"Failed to initialize ML service: {e}")
         logger.error(traceback.format_exc())
         raise
 
@@ -243,26 +248,32 @@ def health_check():
                 jsonify({"status": "error", "message": "ML service not initialized"}),
                 503,
             )
+
         health_data = ml_service.get_health_status()
-        return jsonify(health_check), 200
+        return jsonify(health_data), 200
+
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route("/analyze", methods=["GET"])
+@app.route("/analyze", methods=["POST"])
 def analyze_frame():
     try:
         if ml_service is None:
-            return jsonify({"error": "ML service not intialized"}), 500
+            return jsonify({"error": "ML service not initialized"}), 503
 
         data = request.get_json()
         if not data or "image_data" not in data:
             return jsonify({"error": "Missing image_data in request"}), 400
+
         image_data = data["image_data"]
         config = data.get("config", {})
+
         result = ml_service.analyze_frame(image_data, config)
+
         return jsonify(result), 200
+
     except ValueError as e:
         logger.error(f"Validation error: {e}")
         return jsonify({"error": f"Validation error: {str(e)}"}), 400
@@ -293,6 +304,7 @@ def get_models_info():
             ),
             200,
         )
+
     except Exception as e:
         logger.error(f"Failed to get model info: {e}")
         return jsonify({"error": str(e)}), 500
@@ -302,23 +314,25 @@ def get_models_info():
 def update_config():
     try:
         if ml_service is None:
-            return jsonify({"error": "ML service not initialzied"}), 503
+            return jsonify({"error": "ML service not initialized"}), 503
+
         config = request.get_json()
         if not config:
             return jsonify({"error": "No configuration provided"}), 400
 
+        # TODO: Implement configuration update logic
         logger.info(f"Configuration update requested: {config}")
+
         return jsonify({"status": "success", "message": "Configuration updated"}), 200
 
     except Exception as e:
-
         logger.error(f"Configuration update failed: {e}")
         return jsonify({"error": str(e)}), 500
 
 
 @app.errorhandler(404)
 def not_found(error):
-    return jsonify({"error": "Endpoint not found."}), 404
+    return jsonify({"error": "Endpoint not found"}), 404
 
 
 @app.errorhandler(500)
@@ -332,5 +346,6 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("DEBUG", "False").lower() == "true"
+
     logger.info(f"Starting ML service on port {port}")
     app.run(host="0.0.0.0", port=port, debug=debug, threaded=True)

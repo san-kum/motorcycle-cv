@@ -6,6 +6,12 @@
 *.exe~
 *.dll
 *.so
+*.pt
+*.log
+.env/
+.vscode/
+test/
+__pycache__
 *.dylib
 *.txt
 # Test binary, built with `go test -c`

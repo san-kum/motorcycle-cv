@@ -25,29 +25,30 @@ type ClientConfig struct {
 	RetryDelay          time.Duration
 	HealthCheckInterval time.Duration
 }
+
 type AnalysisRequest struct {
-	ImageData []byte         `json:"image_data"`
-	Timestamp int64          `json:"timestamp"`
-	Config    map[string]any `json:"config"`
+	ImageData []byte                 `json:"image_data"`
+	Timestamp int64                  `json:"timestamp"`
+	Config    map[string]interface{} `json:"config,omitempty"`
 }
 
 type AnalysisResponse struct {
-	OverallScore   int                   `json:"overall_score"`
-	PostureScore   int                   `json:"posture_score"`
-	LaneScore      int                   `json:"lane_score"`
-	SpeedScore     int                   `json:"speed_score"`
-	Detections     []ObjectDetection     `json:"detections"`
-	PoseKeypoints  []PoseKeypoint        `json:"pose_keypoints"`
-	SceneAnalysis  []SceneAnalysisResult `json:"scene_analysis"`
-	ProcessingTime float64               `json:"processing_time"`
-	ModelVersion   string                `json:"model_version"`
+	OverallScore   int                 `json:"overall_score"`
+	PostureScore   int                 `json:"posture_score"`
+	LaneScore      int                 `json:"lane_score"`
+	SpeedScore     int                 `json:"speed_score"`
+	Detections     []ObjectDetection   `json:"detections"`
+	PoseKeypoints  []PoseKeypoint      `json:"pose_keypoints"`
+	SceneAnalysis  SceneAnalysisResult `json:"scene_analysis"`
+	ProcessingTime float64             `json:"processing_time"`
+	ModelVersion   string              `json:"model_version"`
 }
 
 type ObjectDetection struct {
 	Class       string  `json:"class"`
 	Confidence  float64 `json:"confidence"`
 	BoundingBox BBox    `json:"bounding_box"`
-	TrackID     int     `json:"track_id"`
+	TrackID     int     `json:"track_id,omitempty"`
 }
 
 type BBox struct {
@@ -67,40 +68,13 @@ type PoseKeypoint struct {
 
 type SceneAnalysisResult struct {
 	RoadType         string  `json:"road_type"`
-	LaneCout         int     `json:"lane_count"`
+	LaneCount        int     `json:"lane_count"`
 	WeatherCondition string  `json:"weather_condition"`
 	TimeOfDay        string  `json:"time_of_day"`
 	TrafficDensity   string  `json:"traffic_density"`
 	RoadCondition    string  `json:"road_condition"`
 	SpeedLimit       int     `json:"speed_limit"`
 	Visibility       float64 `json:"visibility"`
-}
-
-func (c *Client) HealthCheck() error {
-	url := fmt.Sprintf("%s/health", c.baseURL)
-	response, err := c.httpClient.Get(url)
-	if err != nil {
-		return fmt.Errorf("health check failed: %w", err)
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("ML service unhealthy (status %d)", response.StatusCode)
-	}
-	return nil
-}
-
-func (c *Client) startHealthChecker() {
-	ticker := time.NewTicker(c.config.HealthCheckInterval)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		if err := c.HealthCheck(); err != nil {
-			c.logger.Error("ML service health check failed", zap.Error(err))
-		} else {
-			c.logger.Debug("ML service health check successful")
-		}
-	}
 }
 
 func NewClient(baseURL string, logger *zap.Logger) (*Client, error) {
@@ -126,7 +100,7 @@ func NewClient(baseURL string, logger *zap.Logger) (*Client, error) {
 	}
 
 	if err := client.HealthCheck(); err != nil {
-		logger.Warn("ML service not available", zap.Error(err))
+		logger.Warn("ML service not available at startup", zap.Error(err))
 	}
 
 	go client.startHealthChecker()
@@ -138,26 +112,29 @@ func (c *Client) AnalyzeFrame(request *models.FrameRequest) (*models.AnalysisRes
 	mlRequest := &AnalysisRequest{
 		ImageData: request.ImageData,
 		Timestamp: request.Timestamp,
-		Config: map[string]any{
+		Config: map[string]interface{}{
 			"client_id": request.ClientID,
 		},
 	}
 
 	var lastErr error
-	for i := 0; i <= c.config.MaxRetries; i++ {
-		if i > 0 {
-			c.logger.Warn("Retrying ML analysis request", zap.Int("attempt", i), zap.Error(lastErr))
-			time.Sleep(c.config.RetryDelay * time.Duration(i))
+	for attempt := 0; attempt <= c.config.MaxRetries; attempt++ {
+		if attempt > 0 {
+			c.logger.Warn("Retrying ML analysis request",
+				zap.Int("attempt", attempt),
+				zap.Error(lastErr))
+			time.Sleep(c.config.RetryDelay * time.Duration(attempt))
 		}
 
 		result, err := c.executeAnalysisRequest(mlRequest)
-		if err != nil {
+		if err == nil {
 			return result, nil
 		}
 		lastErr = err
 	}
 
-	return nil, fmt.Errorf("ML analysis failed after %d attempts: %w", c.config.MaxRetries, lastErr)
+	return nil, fmt.Errorf("ML analysis failed after %d attempts: %w",
+		c.config.MaxRetries, lastErr)
 }
 
 func (c *Client) executeAnalysisRequest(request *AnalysisRequest) (*models.AnalysisResult, error) {
@@ -173,7 +150,7 @@ func (c *Client) executeAnalysisRequest(request *AnalysisRequest) (*models.Analy
 	}
 
 	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("User-Agent", "motorcycle-cv/1.0")
+	httpRequest.Header.Set("User-Agent", "motorcycle-feedback-system/1.0")
 
 	response, err := c.httpClient.Do(httpRequest)
 	if err != nil {
@@ -183,7 +160,8 @@ func (c *Client) executeAnalysisRequest(request *AnalysisRequest) (*models.Analy
 
 	if response.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(response.Body)
-		return nil, fmt.Errorf("ML service error (status %d): %s", response.StatusCode, string(bodyBytes))
+		return nil, fmt.Errorf("ML service error (status %d): %s",
+			response.StatusCode, string(bodyBytes))
 	}
 
 	var mlResponse AnalysisResponse
@@ -192,7 +170,6 @@ func (c *Client) executeAnalysisRequest(request *AnalysisRequest) (*models.Analy
 	}
 
 	return c.convertMLResponse(&mlResponse), nil
-
 }
 
 func (c *Client) convertMLResponse(mlResp *AnalysisResponse) *models.AnalysisResult {
@@ -225,33 +202,60 @@ func (c *Client) convertMLResponse(mlResp *AnalysisResponse) *models.AnalysisRes
 				Type:       "keypoint",
 				X:          keypoint.X,
 				Y:          keypoint.Y,
-				Width:      5,
+				Width:      5, // Small circle for keypoint
 				Height:     5,
 				Label:      keypoint.Name,
 				Confidence: keypoint.Confidence,
 			})
 		}
 	}
+
 	result.Annotations = annotations
 
-	if len(mlResp.SceneAnalysis) > 0 {
-		sa := mlResp.SceneAnalysis[0]
-
-		result.Metadata = map[string]any{
-			"road_type":         sa.RoadType,
-			"lane_count":        sa.LaneCout,
-			"weather_condition": sa.WeatherCondition,
-			"time_of_day":       sa.TimeOfDay,
-			"traffic_density":   sa.TrafficDensity,
-			"road_condition":    sa.RoadCondition,
-			"speed_limit":       sa.SpeedLimit,
-			"visibility":        sa.Visibility,
-		}
+	result.Metadata = map[string]interface{}{
+		"road_type":         mlResp.SceneAnalysis.RoadType,
+		"lane_count":        mlResp.SceneAnalysis.LaneCount,
+		"weather_condition": mlResp.SceneAnalysis.WeatherCondition,
+		"time_of_day":       mlResp.SceneAnalysis.TimeOfDay,
+		"traffic_density":   mlResp.SceneAnalysis.TrafficDensity,
+		"road_condition":    mlResp.SceneAnalysis.RoadCondition,
+		"speed_limit":       mlResp.SceneAnalysis.SpeedLimit,
+		"visibility":        mlResp.SceneAnalysis.Visibility,
 	}
+
 	return result
 }
 
-func (c *Client) GetModelInfo() (map[string]any, error) {
+func (c *Client) HealthCheck() error {
+	url := fmt.Sprintf("%s/health", c.baseURL)
+
+	response, err := c.httpClient.Get(url)
+	if err != nil {
+		return fmt.Errorf("health check failed: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("ML service unhealthy (status %d)", response.StatusCode)
+	}
+
+	return nil
+}
+
+func (c *Client) startHealthChecker() {
+	ticker := time.NewTicker(c.config.HealthCheckInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if err := c.HealthCheck(); err != nil {
+			c.logger.Error("ML service health check failed", zap.Error(err))
+		} else {
+			c.logger.Debug("ML service health check passed")
+		}
+	}
+}
+
+func (c *Client) GetModelInfo() (map[string]interface{}, error) {
 	url := fmt.Sprintf("%s/models/info", c.baseURL)
 
 	response, err := c.httpClient.Get(url)
@@ -272,7 +276,7 @@ func (c *Client) GetModelInfo() (map[string]any, error) {
 	return modelInfo, nil
 }
 
-func (c *Client) UpdateConfig(config map[string]any) error {
+func (c *Client) UpdateConfig(config map[string]interface{}) error {
 	requestData, err := json.Marshal(config)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)

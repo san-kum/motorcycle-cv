@@ -42,12 +42,14 @@ class RidingAnalyzer:
     ) -> Dict[str, Any]:
         try:
             motorcycle_det, rider_det = self._find_motorcycle_and_rider(detections)
-            posture_score = self._analyze_posture(image, motorcycle_det, rider_det) # type: ignore
-            lane_score = self._analyze_lane_position(detections, scene_analysis) # type: ignore
+            posture_score = self._analyze_posture(pose_keypoints, rider_det)
+            lane_score = self._analyze_lane_position(
+                image, motorcycle_det, scene_analysis
+            )
             speed_score = self._analyze_speed_appropriateness(
                 detections, scene_analysis
             )
-            safety_score = self._analyze_safety_margins(detections, motorcycle_det) # type: ignore
+            safety_score = self._analyze_safety_margins(detections, motorcycle_det)
 
             overall_score = self._calculate_overall_score(
                 posture_score, lane_score, speed_score, safety_score
@@ -232,7 +234,7 @@ class RidingAnalyzer:
             logger.error(f"Speed analysis error: {e}")
             return 75.0
 
-    def _analze_safety_margins(
+    def _analyze_safety_margins(
         self, detections: List[Dict], motorcycle_det: Optional[Dict]
     ) -> float:
         if not motorcycle_det:

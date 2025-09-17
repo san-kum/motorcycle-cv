@@ -23,7 +23,7 @@ class MotorcycleFeedback {
     this.frameInterval = null;
 
     this.config = {
-      framRare: 10,
+      frameRate: 10,
       websocketUrl: "ws://localhost:8080/ws",
       videoConstraints: {
         video: {

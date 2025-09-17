@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -48,7 +49,7 @@ func NewWebSocketHandler(processor *processor.FrameProcessor, logger *zap.Logger
 func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		h.logger.Error("failed to upgraade websocket connecction", zap.Error(err))
+		h.logger.Error("failed to upgrade websocket connection", zap.Error(err))
 		return
 	}
 	defer conn.Close()
@@ -67,8 +68,9 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	defer ticker.Stop()
 
 	done := make(chan struct{})
+	writeMu := &sync.Mutex{}
 
-	go h.pingRoutine(conn, ticker, done)
+	go h.pingRoutine(conn, ticker, done, writeMu)
 
 	for {
 		select {
@@ -84,32 +86,32 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 				close(done)
 				return
 			}
-			h.handleMessage(conn, &message)
+			h.handleMessage(conn, &message, writeMu)
 		}
 	}
 
 }
 
-func (h *WebSocketHandler) handleMessage(conn *websocket.Conn, message *ClientMessage) {
+func (h *WebSocketHandler) handleMessage(conn *websocket.Conn, message *ClientMessage, writeMu *sync.Mutex) {
 	switch message.Type {
 	case "frame":
-		h.processVideoFrame(conn, message)
+		h.processVideoFrame(conn, message, writeMu)
 	case "ping":
-		h.sendMessage(conn, "pong", map[string]any{"timestamp": time.Now().Unix()})
+		h.sendMessage(conn, writeMu, "pong", map[string]any{"timestamp": time.Now().Unix()})
 	case "config":
-		h.handleConfigUpdate(conn, message)
+		h.handleConfigUpdate(conn, message, writeMu)
 	default:
-		h.logger.Warn("Unknown message type recieved", zap.String("type", message.Type))
-		h.sendError(conn, "Unknown message type: "+message.Type)
+		h.logger.Warn("Unknown message type received", zap.String("type", message.Type))
+		h.sendError(conn, writeMu, "Unknown message type: "+message.Type)
 	}
 }
 
-func (h *WebSocketHandler) processVideoFrame(conn *websocket.Conn, message *ClientMessage) {
+func (h *WebSocketHandler) processVideoFrame(conn *websocket.Conn, message *ClientMessage, writeMu *sync.Mutex) {
 	imageData, err := h.extractImageData(message.Data)
 
 	if err != nil {
 		h.logger.Error("Failed to extract image data", zap.Error(err))
-		h.sendError(conn, "invalid image data format")
+		h.sendError(conn, writeMu, "invalid image data format")
 		return
 	}
 
@@ -122,15 +124,15 @@ func (h *WebSocketHandler) processVideoFrame(conn *websocket.Conn, message *Clie
 		result, err := h.processor.ProcessFrame(frameRequest)
 		if err != nil {
 			h.logger.Error("Frame processing failed", zap.Error(err))
-			h.sendError(conn, "Frame processing failed")
+			h.sendError(conn, writeMu, "Frame processing failed")
 			return
 		}
 
-		h.sendMessage(conn, "analysis", result)
+		h.sendMessage(conn, writeMu, "analysis", result)
 
 		if len(result.Feedback) > 0 {
 			for _, feedback := range result.Feedback {
-				h.sendMessage(conn, "feedback", map[string]any{
+				h.sendMessage(conn, writeMu, "feedback", map[string]any{
 					"message": feedback.Message,
 					"type":    feedback.Type,
 					"score":   feedback.Score,
@@ -157,45 +159,51 @@ func (h *WebSocketHandler) extractImageData(dataURL string) ([]byte, error) {
 	return imageData, err
 }
 
-func (h *WebSocketHandler) handleConfigUpdate(conn *websocket.Conn, message *ClientMessage) {
+func (h *WebSocketHandler) handleConfigUpdate(conn *websocket.Conn, message *ClientMessage, writeMu *sync.Mutex) {
 	var config map[string]any
 	if err := json.Unmarshal([]byte(message.Data), &config); err != nil {
 		h.logger.Error("Invalid config format", zap.Error(err))
-		h.sendError(conn, "Invalid configuration format")
+		h.sendError(conn, writeMu, "Invalid configuration format")
 		return
 	}
 
 	h.processor.UpdateConfig(config)
-	h.sendMessage(conn, "config_updated", map[string]interface{}{
+	h.sendMessage(conn, writeMu, "config_updated", map[string]interface{}{
 		"status": "success",
 		"config": config,
 	})
 }
 
-func (h *WebSocketHandler) sendMessage(conn *websocket.Conn, messageType string, data interface{}) {
+func (h *WebSocketHandler) sendMessage(conn *websocket.Conn, writeMu *sync.Mutex, messageType string, data interface{}) {
 	message := ServerMessage{
 		Type: messageType,
 		Data: data,
 	}
+
+	writeMu.Lock()
+	defer writeMu.Unlock()
 
 	if err := conn.WriteJSON(message); err != nil {
 		h.logger.Error("Failed to send WebSocket message", zap.Error(err))
 	}
 }
 
-func (h *WebSocketHandler) sendError(conn *websocket.Conn, errorMsg string) {
-	h.sendMessage(conn, "error", map[string]interface{}{
+func (h *WebSocketHandler) sendError(conn *websocket.Conn, writeMu *sync.Mutex, errorMsg string) {
+	h.sendMessage(conn, writeMu, "error", map[string]interface{}{
 		"message":   errorMsg,
 		"timestamp": time.Now().Unix(),
 	})
 }
 
-func (h *WebSocketHandler) pingRoutine(conn *websocket.Conn, ticker *time.Ticker, done chan struct{}) {
+func (h *WebSocketHandler) pingRoutine(conn *websocket.Conn, ticker *time.Ticker, done chan struct{}, writeMu *sync.Mutex) {
 	for {
 		select {
 		case <-ticker.C:
 			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			writeMu.Lock()
+			err := conn.WriteMessage(websocket.PingMessage, nil)
+			writeMu.Unlock()
+			if err != nil {
 				h.logger.Error("Failed to send ping", zap.Error(err))
 				close(done)
 				return

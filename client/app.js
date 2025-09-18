@@ -24,12 +24,13 @@ class MotorcycleFeedback {
 
     this.config = {
       frameRate: 10,
-      websocketUrl: "ws://localhost:8080/ws",
+      websocketUrl: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`,
       videoConstraints: {
         video: {
           width: { ideal: 1280 },
           height: { ideal: 720 },
           frameRate: { ideal: 30 },
+          facingMode: { ideal: 'environment' },
         },
         audio: false,
       },

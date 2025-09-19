@@ -1,68 +1,353 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hello World</title>
+    <title>Motorcycle CV - AI Riding Assistant</title>
     <link rel="stylesheet" href="/static/style.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
   </head>
   <body>
-    <div class="container">
-      <header>
-        <h1>Demo</h1>
-        <p>Real-time feedback </p>
+    <div id="loadingScreen" class="loading-screen">
+      <div class="loading-content">
+        <div class="loading-spinner"></div>
+        <h2>Initializing AI Assistant</h2>
+        <p>Loading machine learning models...</p>
+      </div>
+    </div>
+
+    <div id="onboardingModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Welcome to Motorcycle CV</h2>
+          <button class="close-btn" id="closeOnboarding">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="onboarding-step active" data-step="1">
+            <div class="step-icon"><i class="fas fa-camera"></i></div>
+            <h3>Camera Setup</h3>
+            <p>
+              Allow camera access for real-time analysis. Position your device
+              to capture your riding posture and road view.
+            </p>
+          </div>
+          <div class="onboarding-step" data-step="2">
+            <div class="step-icon"><i class="fas fa-brain"></i></div>
+            <h3>AI Analysis</h3>
+            <p>
+              Our AI analyzes your posture, lane position, speed, and safety
+              margins in real-time.
+            </p>
+          </div>
+          <div class="onboarding-step" data-step="3">
+            <div class="step-icon"><i class="fas fa-chart-line"></i></div>
+            <h3>Get Feedback</h3>
+            <p>
+              Receive instant feedback and tips to improve your riding technique
+              and safety.
+            </p>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="prevStep" disabled>
+            Previous
+          </button>
+          <button class="btn btn-primary" id="nextStep">Next</button>
+          <button class="btn btn-primary" id="startApp" style="display: none">
+            Start Riding
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="app-container">
+      <header class="app-header">
+        <div class="header-left">
+          <div class="logo">
+            <i class="fas fa-motorcycle"></i>
+            <span>Motorcycle CV</span>
+          </div>
+          <div class="app-status">
+            <div id="connectionStatus" class="status-indicator disconnected">
+              <div class="status-dot"></div>
+              <span>Disconnected</span>
+            </div>
+          </div>
+        </div>
+        <div class="header-right">
+          <button class="btn-icon" id="settingsBtn" title="Settings">
+            <i class="fas fa-cog"></i>
+          </button>
+          <button class="btn-icon" id="themeToggle" title="Toggle Theme">
+            <i class="fas fa-moon"></i>
+          </button>
+          <button class="btn-icon" id="fullscreenBtn" title="Fullscreen">
+            <i class="fas fa-expand"></i>
+          </button>
+        </div>
       </header>
 
-      <main>
-        <div class="video-section">
+      <main class="app-main">
+        <section class="video-section">
           <div class="video-container">
-            <video id="videoElement" autoplay muted playsinline></video>
-            <canvas id="overlayCanvas"></canvas>
-          </div>
-          <div class="controls">
-            <button id="startBtn">Start Analysis</button>
-            <button id="stopBtn">Stop Analysis</button>
-            <button id="recordBtn">Start Recording</button>
-          </div>
-        </div>
-
-        <div class="feedback-section">
-          <div class="status-panel">
-            <h3>System Status</h3>
-            <div id="connectionStatus" class="status disconnected">
-              Disconnected
+            <div class="video-wrapper">
+              <video id="videoElement" autoplay muted playsinline></video>
+              <canvas id="overlayCanvas"></canvas>
+              <div class="video-overlay">
+                <div class="recording-indicator" id="recordingIndicator">
+                  <div class="recording-dot"></div>
+                  <span>Recording</span>
+                </div>
+                <div class="analysis-indicator" id="analysisIndicator">
+                  <div class="spinner"></div>
+                  <span>Analyzing...</span>
+                </div>
+              </div>
             </div>
-            <div id="processingStatus" class="status">Ready</div>
+            <div class="video-controls">
+              <button class="btn btn-primary btn-large" id="startBtn">
+                <i class="fas fa-play"></i>
+                <span>Start Analysis</span>
+              </button>
+              <button class="btn btn-danger btn-large" id="stopBtn" disabled>
+                <i class="fas fa-stop"></i>
+                <span>Stop Analysis</span>
+              </button>
+              <button class="btn btn-warning" id="recordBtn">
+                <i class="fas fa-video"></i>
+                <span>Record Session</span>
+              </button>
+              <button class="btn btn-secondary" id="captureBtn">
+                <i class="fas fa-camera"></i>
+                <span>Capture</span>
+              </button>
+            </div>
           </div>
+        </section>
+
+        <section class="dashboard-section">
+          <div class="score-cards">
+            <div class="score-card overall">
+              <div class="score-header">
+                <h3>Overall Score</h3>
+                <div class="score-trend" id="overallTrend">
+                  <i class="fas fa-arrow-up"></i>
+                </div>
+              </div>
+              <div class="score-value">
+                <span id="overallScore" class="score-number">--</span>
+                <span class="score-max">/100</span>
+              </div>
+              <div class="score-progress">
+                <div class="progress-bar">
+                  <div class="progress-fill" id="overallProgress"></div>
+                </div>
+              </div>
+              <div class="score-grade" id="overallGrade">--</div>
+            </div>
+
+            <div class="score-card posture">
+              <div class="score-header">
+                <h3>Posture</h3>
+                <i class="fas fa-user"></i>
+              </div>
+              <div class="score-value">
+                <span id="postureScore" class="score-number">--</span>
+                <span class="score-max">/100</span>
+              </div>
+              <div class="score-progress">
+                <div class="progress-bar">
+                  <div class="progress-fill" id="postureProgress"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="score-card lane">
+              <div class="score-header">
+                <h3>Lane Position</h3>
+                <i class="fas fa-road"></i>
+              </div>
+              <div class="score-value">
+                <span id="laneScore" class="score-number">--</span>
+                <span class="score-max">/100</span>
+              </div>
+              <div class="score-progress">
+                <div class="progress-bar">
+                  <div class="progress-fill" id="laneProgress"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="score-card speed">
+              <div class="score-header">
+                <h3>Speed Control</h3>
+                <i class="fas fa-tachometer-alt"></i>
+              </div>
+              <div class="score-value">
+                <span id="speedScore" class="score-number">--</span>
+                <span class="score-max">/100</span>
+              </div>
+              <div class="score-progress">
+                <div class="progress-bar">
+                  <div class="progress-fill" id="speedProgress"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="feedback-panel">
-            <h3>Riding Analysis</h3>
-            <div class="metric">
-              <label>Overall Score:</label>
-              <span id="overallScore">--</span>
+            <div class="panel-header">
+              <h3>Real-time Feedback</h3>
+              <div class="feedback-controls">
+                <button
+                  class="btn-icon"
+                  id="clearFeedback"
+                  title="Clear Feedback"
+                >
+                  <i class="fas fa-trash"></i>
+                </button>
+                <button
+                  class="btn-icon"
+                  id="feedbackSettings"
+                  title="Feedback Settings"
+                >
+                  <i class="fas fa-cog"></i>
+                </button>
+              </div>
             </div>
-            <div class="metric">
-              <label>Posture:</label>
-              <span id="posture">--</span>
-            </div>
-            <div class="metric">
-              <label>Lane Position:</label>
-              <span id="laneScore">--</span>
-            </div>
-            <div class="metric">
-              <label>Speed Appropriateness:</label>
-              <span id="speedScore">--</span>
+            <div class="feedback-content">
+              <div id="feedbackList" class="feedback-messages">
+                <div class="no-feedback">
+                  <i class="fas fa-info-circle"></i>
+                  <p>Start analysis to receive personalized feedback</p>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div class="feedback-details">
-            <h3>Real-time Feedback</h3>
-            <div id="feedbackList" class="feedback-messages">
-              <p class="no-feedback">Start analysis to receieve feedback</p>
+          <div class="session-stats">
+            <div class="panel-header">
+              <h3>Session Statistics</h3>
+              <div class="session-controls">
+                <button
+                  class="btn-icon"
+                  id="exportSession"
+                  title="Export Session"
+                >
+                  <i class="fas fa-download"></i>
+                </button>
+                <button
+                  class="btn-icon"
+                  id="sessionHistory"
+                  title="Session History"
+                >
+                  <i class="fas fa-history"></i>
+                </button>
+              </div>
+            </div>
+            <div class="stats-grid">
+              <div class="stat-item">
+                <div class="stat-label">Duration</div>
+                <div class="stat-value" id="sessionDuration">00:00</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-label">Frames Analyzed</div>
+                <div class="stat-value" id="framesAnalyzed">0</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-label">Avg Score</div>
+                <div class="stat-value" id="avgScore">--</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-label">Improvements</div>
+                <div class="stat-value" id="improvements">0</div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <nav class="bottom-nav">
+        <button class="nav-item active" data-tab="analysis">
+          <i class="fas fa-chart-line"></i>
+          <span>Analysis</span>
+        </button>
+        <button class="nav-item" data-tab="history">
+          <i class="fas fa-history"></i>
+          <span>History</span>
+        </button>
+        <button class="nav-item" data-tab="settings">
+          <i class="fas fa-cog"></i>
+          <span>Settings</span>
+        </button>
+        <button class="nav-item" data-tab="profile">
+          <i class="fas fa-user"></i>
+          <span>Profile</span>
+        </button>
+      </nav>
+    </div>
+
+    <div id="settingsModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Settings</h2>
+          <button class="close-btn" id="closeSettings">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="settings-section">
+            <h3>Analysis Settings</h3>
+            <div class="setting-item">
+              <label for="frameRate">Frame Rate (FPS)</label>
+              <input type="range" id="frameRate" min="1" max="30" value="10" />
+              <span class="setting-value">10 FPS</span>
+            </div>
+            <div class="setting-item">
+              <label for="confidenceThreshold">Confidence Threshold</label>
+              <input
+                type="range"
+                id="confidenceThreshold"
+                min="0.1"
+                max="1"
+                step="0.1"
+                value="0.5"
+              />
+              <span class="setting-value">0.5</span>
+            </div>
+          </div>
+          <div class="settings-section">
+            <h3>Feedback Settings</h3>
+            <div class="setting-item">
+              <label>
+                <input type="checkbox" id="audioFeedback" checked />
+                Audio Feedback
+              </label>
+            </div>
+            <div class="setting-item">
+              <label>
+                <input type="checkbox" id="visualFeedback" checked />
+                Visual Overlays
+              </label>
             </div>
           </div>
         </div>
-      </main>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="resetSettings">Reset</button>
+          <button class="btn btn-primary" id="saveSettings">Save</button>
+        </div>
+      </div>
     </div>
+
+    <div id="toastContainer" class="toast-container"></div>
+
     <script src="/static/app.js"></script>
   </body>
 </html>

@@ -504,6 +504,7 @@ body {
   overflow: hidden;
   background: var(--gray-900);
   aspect-ratio: 16/9;
+  min-height: 200px;
 }
 
 #videoElement {
@@ -1117,6 +1118,139 @@ body {
   :root {
     --border-color: #000000;
     --text-secondary: #000000;
+  }
+}
+
+/* Mobile-specific improvements */
+@media (max-width: 768px) {
+  /* Mobile video improvements */
+  .video-wrapper {
+    aspect-ratio: 4/3; /* Better for mobile cameras */
+    min-height: 250px;
+    max-height: 60vh;
+  }
+
+  #videoElement {
+    object-fit: cover;
+  }
+
+  .video-container {
+    padding: var(--space-2);
+  }
+
+  /* Mobile toast improvements */
+  .toast {
+    max-width: 90vw;
+    word-wrap: break-word;
+  }
+
+  /* Mobile modal improvements */
+  .modal-content {
+    margin: var(--space-4);
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+
+  .mobile-instructions {
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+    margin-top: var(--space-3);
+  }
+
+  .mobile-instructions ul {
+    margin: var(--space-2) 0;
+    padding-left: var(--space-4);
+  }
+
+  .mobile-instructions li {
+    margin: var(--space-1) 0;
+  }
+
+  /* Better touch targets for mobile */
+  .btn-large {
+    min-height: 48px;
+  }
+
+  .nav-item {
+    min-height: 48px;
+    padding: var(--space-2);
+  }
+
+  /* Permission modal styles */
+  .permission-steps {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .step {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+
+  .step-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    flex-shrink: 0;
+  }
+
+  .step-content h3 {
+    margin: 0 0 var(--space-1) 0;
+    font-size: 1rem;
+  }
+
+  .step-content p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+  }
+
+  .mobile-tips {
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+    margin-top: var(--space-4);
+  }
+
+  .mobile-tips h4 {
+    margin: 0 0 var(--space-2) 0;
+    color: var(--text-primary);
+  }
+
+  .mobile-tips ul {
+    margin: 0;
+    padding-left: var(--space-4);
+  }
+
+  .mobile-tips li {
+    margin: var(--space-1) 0;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+  }
+}
+
+/* Portrait orientation specific fixes */
+@media (max-width: 768px) and (orientation: portrait) {
+  .video-wrapper {
+    aspect-ratio: 3/4; /* Portrait aspect ratio for mobile */
+    max-height: 50vh;
+  }
+}
+
+/* Landscape orientation specific fixes */
+@media (max-width: 768px) and (orientation: landscape) {
+  .video-wrapper {
+    aspect-ratio: 16/9; /* Landscape aspect ratio */
+    max-height: 70vh;
   }
 }
 

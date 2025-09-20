@@ -192,26 +192,69 @@ class MotorcycleFeedbackApp {
     const videoWidth = this.videoElement.videoWidth || rect.width;
     const videoHeight = this.videoElement.videoHeight || rect.height;
 
+    // Use the video element's actual dimensions for the canvas
     this.overlayCanvas.width = videoWidth;
     this.overlayCanvas.height = videoHeight;
 
+    // Set canvas display size to match the video element
     this.overlayCanvas.style.width = "100%";
     this.overlayCanvas.style.height = "100%";
+    
+    console.log("Canvas setup:", { videoWidth, videoHeight, rectWidth: rect.width, rectHeight: rect.height });
   }
 
   async startAnalysis() {
     try {
-      this.updateStatus("Initializing camera...", "processing");
+      this.updateStatus("Requesting camera access...", "processing");
+      console.log("Starting camera analysis...");
 
-      this.mediaStream = await navigator.mediaDevices.getUserMedia(
-        this.config.videoConstraints
-      );
+      // Check if we're on HTTPS or localhost
+      if (!this.isSecureContext()) {
+        this.showToast(
+          "Camera access requires HTTPS. Please use the secure tunnel URL.",
+          "error"
+        );
+        this.updateStatus("HTTPS required", "disconnected");
+        return;
+      }
+
+      // Check if mediaDevices is available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        this.showToast(
+          "Camera access not supported on this device/browser.",
+          "error"
+        );
+        this.updateStatus("Camera not supported", "disconnected");
+        return;
+      }
+
+      // Detect browser and platform
+      const isChrome = /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor);
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      
+      console.log("Browser detection:", { isChrome, isMobile, userAgent: navigator.userAgent });
+
+      // Use Chrome-specific constraints if needed
+      const constraints = this.getChromeOptimizedConstraints(isChrome, isMobile);
+
+      console.log("Requesting camera with constraints:", constraints);
+      this.showToast("Please allow camera access when prompted", "info");
+
+      // Add a small delay for Chrome to ensure proper permission handling
+      if (isChrome && isMobile) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      console.log("Camera access granted!");
+      
       this.videoElement.srcObject = this.mediaStream;
 
       await new Promise((resolve) => {
         this.videoElement.onloadedmetadata = resolve;
       });
 
+      console.log("Video metadata loaded, connecting to WebSocket...");
       await this.connectWebSocket();
 
       this.startFrameProcessing();
@@ -229,12 +272,8 @@ class MotorcycleFeedbackApp {
       this.updateStatus("Analyzing...", "connected");
       this.showToast("Analysis started successfully", "success");
     } catch (error) {
-      console.error("Failed to start analysis:", error);
-      this.showToast(
-        "Failed to start analysis. Please check camera permissions.",
-        "error"
-      );
-      this.updateStatus("Connection failed", "disconnected");
+      console.error("Camera access failed:", error);
+      this.handleCameraError(error);
     }
   }
 
@@ -723,6 +762,13 @@ class MotorcycleFeedbackApp {
 
   showOnboarding() {
     this.onboardingModal.classList.add("active");
+    
+    // Show mobile-specific instructions if on mobile
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const mobileInstructions = this.onboardingModal.querySelector('.mobile-instructions');
+    if (mobileInstructions) {
+      mobileInstructions.style.display = isMobile ? 'block' : 'none';
+    }
   }
 
   hideOnboarding() {
@@ -969,6 +1015,291 @@ class MotorcycleFeedbackApp {
         }
       }, 300);
     }, 3000);
+  }
+
+  isSecureContext() {
+    return window.isSecureContext || 
+           location.protocol === 'https:' || 
+           location.hostname === 'localhost' || 
+           location.hostname === '127.0.0.1';
+  }
+
+  async checkCameraPermission() {
+    try {
+      if (navigator.permissions) {
+        const permission = await navigator.permissions.query({ name: 'camera' });
+        return permission.state; // 'granted', 'denied', or 'prompt'
+      }
+      return 'prompt'; // If permissions API not available, assume we can prompt
+    } catch (error) {
+      console.log('Permission check failed:', error);
+      return 'prompt'; // Default to allowing prompt
+    }
+  }
+
+  getChromeOptimizedConstraints(isChrome, isMobile) {
+    if (isChrome && isMobile) {
+      // Chrome mobile has stricter requirements
+      return {
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { min: 320, ideal: 640, max: 1280 },
+          height: { min: 240, ideal: 480, max: 960 },
+          frameRate: { ideal: 15, max: 30 },
+          aspectRatio: { ideal: 4/3 } // Better for mobile cameras
+        },
+        audio: false
+      };
+    } else if (isMobile) {
+      // Other mobile browsers - try to get good aspect ratio
+      return {
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 960, max: 1440 }, // 4:3 aspect ratio
+          frameRate: { ideal: 30, max: 60 },
+          aspectRatio: { ideal: 4/3 }
+        },
+        audio: false
+      };
+    }
+    
+    // Desktop browsers
+    return this.config.videoConstraints;
+  }
+
+  getMobileOptimizedConstraints() {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    if (isMobile) {
+      return {
+        video: {
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+          frameRate: { ideal: 30, max: 60 },
+          facingMode: { ideal: "environment" },
+          aspectRatio: { ideal: 16/9 }
+        },
+        audio: false
+      };
+    }
+    
+    return this.config.videoConstraints;
+  }
+
+  handleCameraError(error) {
+    console.error("Camera error details:", error);
+    console.error("Error name:", error.name);
+    console.error("Error message:", error.message);
+    
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    switch (error.name) {
+      case 'NotAllowedError':
+        console.log("Camera permission denied");
+        this.showMobileCameraPermissionGuide();
+        break;
+      case 'NotFoundError':
+        this.showToast("No camera found on this device.", "error");
+        this.updateStatus("No camera", "disconnected");
+        break;
+      case 'NotReadableError':
+        this.showToast("Camera is already in use by another application. Please close other apps using the camera.", "error");
+        this.updateStatus("Camera in use", "disconnected");
+        break;
+      case 'OverconstrainedError':
+        console.log("Camera constraints too strict, trying basic settings...");
+        this.tryBasicCameraSettings();
+        return;
+      case 'SecurityError':
+        this.showToast("Camera access blocked. Please ensure you're using HTTPS and allow camera permissions.", "error");
+        this.updateStatus("Security error", "disconnected");
+        break;
+      case 'TypeError':
+        this.showToast("Camera access not supported on this device.", "error");
+        this.updateStatus("Not supported", "disconnected");
+        break;
+      default:
+        console.log("Unknown camera error:", error);
+        if (isMobile) {
+          this.showMobileCameraPermissionGuide();
+        } else {
+          this.showToast("Camera access failed. Please check permissions and try again.", "error");
+          this.updateStatus("Camera error", "disconnected");
+        }
+    }
+  }
+
+  showMobileCameraPermissionGuide() {
+    // Create a modal specifically for mobile camera permission issues
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.id = 'mobileCameraModal';
+    
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const isAndroid = /Android/.test(navigator.userAgent);
+    const isChrome = /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor);
+    
+    modal.innerHTML = `
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>📱 Camera Access Required</h2>
+          <button class="close-btn" id="closeMobileCameraModal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="permission-steps">
+            <div class="step">
+              <div class="step-icon">1</div>
+              <div class="step-content">
+                <h3>Look for the permission popup</h3>
+                <p>Your browser should show a popup asking for camera access. <strong>Tap "Allow" or "Allow camera access"</strong>.</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-icon">2</div>
+              <div class="step-content">
+                <h3>Check the address bar</h3>
+                <p>Look for a camera icon (📷) or lock icon (🔒) in your browser's address bar and tap it.</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-icon">3</div>
+              <div class="step-content">
+                <h3>Enable camera permission</h3>
+                <p>In the settings that appear, make sure camera access is set to "Allow".</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-icon">4</div>
+              <div class="step-content">
+                <h3>Refresh and try again</h3>
+                <p>Refresh this page and click "Start Analysis" again.</p>
+              </div>
+            </div>
+          </div>
+          
+          <div class="mobile-tips">
+            <h4>🔧 Troubleshooting:</h4>
+            <ul>
+              <li><strong>Make sure you're using the HTTPS URL</strong> from the tunnel (not HTTP)</li>
+              <li>Try refreshing the page completely</li>
+              <li>Close other apps that might be using the camera</li>
+              <li>Try a different browser (Chrome, Safari, Firefox)</li>
+              ${isIOS ? '<li>On iOS: Go to Settings > Safari > Camera and make sure it\'s set to "Allow"</li>' : ''}
+              ${isAndroid ? '<li>On Android: Check your browser\'s site settings for camera permissions</li>' : ''}
+              ${isChrome ? '<li><strong>Chrome users:</strong> Try tapping the lock icon in the address bar and enable camera access</li>' : ''}
+            </ul>
+          </div>
+          
+          ${isChrome ? `
+            <div class="chrome-specific-tips" style="background: #e3f2fd; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid #2196f3;">
+              <h4>🔵 Chrome-Specific Tips:</h4>
+              <ul style="margin: 10px 0; padding-left: 20px;">
+                <li>Chrome requires HTTPS for camera access - make sure you're using the secure tunnel URL</li>
+                <li>Try tapping the lock icon (🔒) in the address bar and enable camera permissions</li>
+                <li>If the permission popup doesn't appear, try refreshing the page</li>
+                <li>Check Chrome's site settings: Tap the three dots menu → Site settings → Camera</li>
+                <li>Make sure Chrome is updated to the latest version</li>
+              </ul>
+            </div>
+          ` : ''}
+          
+          <div class="debug-info" style="background: #f0f0f0; padding: 10px; border-radius: 5px; margin-top: 15px; font-size: 0.8em;">
+            <strong>Debug Info:</strong><br>
+            Browser: ${isChrome ? 'Chrome' : 'Other'}<br>
+            Platform: ${isIOS ? 'iOS' : isAndroid ? 'Android' : 'Other'}<br>
+            User Agent: ${navigator.userAgent}<br>
+            HTTPS: ${location.protocol === 'https:' ? 'Yes' : 'No'}<br>
+            Secure Context: ${window.isSecureContext ? 'Yes' : 'No'}<br>
+            MediaDevices: ${navigator.mediaDevices ? 'Available' : 'Not Available'}
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="closeMobileCameraModal">Close</button>
+          <button class="btn btn-primary" id="retryMobileCamera">Try Again</button>
+          <button class="btn btn-warning" id="refreshPage">Refresh Page</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Add event listeners
+    document.getElementById('closeMobileCameraModal').addEventListener('click', () => {
+      modal.remove();
+    });
+    
+    document.getElementById('retryMobileCamera').addEventListener('click', () => {
+      modal.remove();
+      this.startAnalysis();
+    });
+    
+    document.getElementById('refreshPage').addEventListener('click', () => {
+      window.location.reload();
+    });
+  }
+
+  async tryBasicCameraSettings() {
+    console.log("Trying basic camera settings...");
+    
+    const isChrome = /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor);
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    // Try different constraint combinations, with Chrome-specific ones first
+    const constraintSets = isChrome && isMobile ? [
+      { video: { facingMode: "environment", width: { min: 320, max: 640 }, height: { min: 240, max: 480 }, aspectRatio: 4/3 }, audio: false },
+      { video: { facingMode: "user", width: { min: 320, max: 640 }, height: { min: 240, max: 480 }, aspectRatio: 4/3 }, audio: false },
+      { video: { width: 640, height: 480, aspectRatio: 4/3 }, audio: false },
+      { video: { width: 320, height: 240, aspectRatio: 4/3 }, audio: false },
+      { video: true, audio: false }
+    ] : [
+      { video: { facingMode: "environment", aspectRatio: 4/3 }, audio: false },
+      { video: { facingMode: "user", aspectRatio: 4/3 }, audio: false },
+      { video: true, audio: false },
+      { video: { width: 640, height: 480, aspectRatio: 4/3 }, audio: false },
+      { video: { width: 320, height: 240, aspectRatio: 4/3 }, audio: false }
+    ];
+    
+    for (let i = 0; i < constraintSets.length; i++) {
+      try {
+        console.log(`Trying constraint set ${i + 1}:`, constraintSets[i]);
+        this.showToast(`Trying camera settings ${i + 1}/${constraintSets.length}...`, "info");
+        
+        this.mediaStream = await navigator.mediaDevices.getUserMedia(constraintSets[i]);
+        console.log("Camera access granted with basic settings!");
+        
+        this.videoElement.srcObject = this.mediaStream;
+        
+        await new Promise((resolve) => {
+          this.videoElement.onloadedmetadata = resolve;
+        });
+
+        await this.connectWebSocket();
+        this.startFrameProcessing();
+
+        this.isAnalyzing = true;
+        this.sessionStartTime = Date.now();
+        this.frameCount = 0;
+        this.scoreHistory = [];
+
+        this.startBtn.disabled = true;
+        this.stopBtn.disabled = false;
+        this.recordBtn.disabled = false;
+        this.captureBtn.disabled = false;
+
+        this.updateStatus("Analyzing...", "connected");
+        this.showToast("Analysis started with basic camera settings", "success");
+        return; // Success, exit the function
+        
+      } catch (error) {
+        console.log(`Constraint set ${i + 1} failed:`, error);
+        if (i === constraintSets.length - 1) {
+          // All constraint sets failed
+          console.error("All camera constraint sets failed:", error);
+          this.handleCameraError(error);
+        }
+      }
+    }
   }
 
   cleanup() {

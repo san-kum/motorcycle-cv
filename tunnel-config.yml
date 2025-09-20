@@ -1,0 +1,7 @@
+tunnel: aa98e81d-76f6-453d-a20b-f2f64501c068
+credentials-file: /home/batman/.cloudflared/aa98e81d-76f6-453d-a20b-f2f64501c068.json
+
+ingress:
+  - hostname: motorcycle-cv-dev.trycloudflare.com
+    service: http://localhost:8080
+  - service: http_status:404

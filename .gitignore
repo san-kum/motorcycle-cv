@@ -14,7 +14,7 @@
 test/
 __pycache__
 *.dylib
-*.txt
+venv/
 # Test binary, built with `go test -c`
 *.test
 *.sum

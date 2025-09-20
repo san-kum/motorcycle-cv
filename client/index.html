@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Motorcycle CV - AI Riding Assistant</title>
     <link rel="stylesheet" href="/static/style.css" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -39,6 +42,14 @@
               Allow camera access for real-time analysis. Position your device
               to capture your riding posture and road view.
             </p>
+            <div class="mobile-instructions" style="display: none;">
+              <p><strong>Mobile users:</strong></p>
+              <ul style="text-align: left; font-size: 0.9em;">
+                <li>Make sure you're using the HTTPS URL from the tunnel</li>
+                <li>When prompted, tap "Allow" for camera access</li>
+                <li>If you miss the prompt, look for a camera icon in your browser's address bar</li>
+              </ul>
+            </div>
           </div>
           <div class="onboarding-step" data-step="2">
             <div class="step-icon"><i class="fas fa-brain"></i></div>
@@ -100,7 +111,7 @@
         <section class="video-section">
           <div class="video-container">
             <div class="video-wrapper">
-              <video id="videoElement" autoplay muted playsinline></video>
+              <video id="videoElement" autoplay muted playsinline webkit-playsinline></video>
               <canvas id="overlayCanvas"></canvas>
               <div class="video-overlay">
                 <div class="recording-indicator" id="recordingIndicator">

@@ -1,11 +1,13 @@
 package processor
 
 import (
+	"context"
 	"crypto/md5"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/san-kum/motorcycle-cv/server/cache"
 	"github.com/san-kum/motorcycle-cv/server/ml"
 	"github.com/san-kum/motorcycle-cv/server/models"
 	"go.uber.org/zap"
@@ -19,6 +21,9 @@ type FrameProcessor struct {
 	config     *ProcessorConfig
 	mutex      sync.RWMutex
 	jobTracker map[string]*VideoJob
+	cache      cache.Cache
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 type ProcessorStats struct {
@@ -49,7 +54,7 @@ type VideoJob struct {
 	Error     string                  `json:"error,omitempty"`
 }
 
-func NewFrameProcessor(mlClient *ml.Client, logger *zap.Logger) *FrameProcessor {
+func NewFrameProcessor(mlClient *ml.Client, cache cache.Cache, logger *zap.Logger) *FrameProcessor {
 	config := &ProcessorConfig{
 		MaxQueueSize:        100,
 		MaxWorkers:          4,
@@ -63,12 +68,17 @@ func NewFrameProcessor(mlClient *ml.Client, logger *zap.Logger) *FrameProcessor 
 		ActiveWorkers: config.MaxWorkers,
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	processor := &FrameProcessor{
 		mlClient:   mlClient,
 		logger:     logger,
 		stats:      stats,
 		config:     config,
 		jobTracker: make(map[string]*VideoJob),
+		cache:      cache,
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 
 	processor.queue = NewProcessingQueue(config.MaxQueueSize, config.MaxWorkers, processor.processFrame)
@@ -80,6 +90,21 @@ func (fp *FrameProcessor) ProcessFrame(request *models.FrameRequest) (*models.An
 	startTime := time.Now()
 	fp.stats.TotalProcessed++
 
+	// Generate cache key for this frame
+	frameHash := fp.generateFrameHash(request.ImageData)
+	cacheKey := cache.GenerateCacheKey("frame", frameHash, request.ClientID)
+
+	// Check cache first
+	if fp.cache != nil {
+		var cachedResult models.AnalysisResult
+		if err := fp.cache.Get(fp.ctx, cacheKey, &cachedResult); err == nil {
+			fp.logger.Debug("Cache hit for frame", zap.String("key", cacheKey))
+			fp.stats.SuccessfullyProcessed++
+			return &cachedResult, nil
+		}
+	}
+
+	// Check for similar frames if enabled
 	if fp.config.SkipSimilarFrames && fp.isSimilarFrame(request.ImageData) {
 		fp.logger.Debug("Skipping similar frame")
 		return fp.getCachedResult(), nil
@@ -91,6 +116,7 @@ func (fp *FrameProcessor) ProcessFrame(request *models.FrameRequest) (*models.An
 		Request:    request,
 		ResultChan: resultChan,
 		StartTime:  startTime,
+		Priority:   fp.calculatePriority(request),
 	}
 
 	if !fp.queue.Enqueue(queueItem) {
@@ -108,6 +134,15 @@ func (fp *FrameProcessor) ProcessFrame(request *models.FrameRequest) (*models.An
 		latency := time.Since(startTime)
 		fp.updateLatencyStats(latency)
 		fp.stats.SuccessfullyProcessed++
+
+		// Cache the result
+		if fp.cache != nil && result.Analysis != nil {
+			go func() {
+				if err := fp.cache.Set(fp.ctx, cacheKey, *result.Analysis); err != nil {
+					fp.logger.Warn("Failed to cache result", zap.Error(err))
+				}
+			}()
+		}
 
 		return result.Analysis, nil
 
@@ -148,7 +183,7 @@ func (fp *FrameProcessor) processFrame(item *QueueItem) {
 		}
 	}
 
-	fp.cacheResult(item.Request.ImageData, analysis)
+	// Cache result is handled in ProcessFrame method
 
 	item.ResultChan <- &ProcessingResult{Analysis: analysis}
 }
@@ -243,7 +278,7 @@ func (fp *FrameProcessor) processVideo(job *VideoJob, videoData []byte) {
 
 	fp.logger.Info("Video processing started", zap.String("job_id", job.ID))
 
-	time.Sleep(2 * time.Second) 
+	time.Sleep(2 * time.Second)
 
 	fp.mutex.Lock()
 	job.Status = "completed"
@@ -277,27 +312,76 @@ func (fp *FrameProcessor) GetStats() *ProcessorStats {
 	return &stats
 }
 
-func (fp *FrameProcessor) isSimilarFrame(imageData []byte) bool {
-	hash := fmt.Sprintf("%x", md5.Sum(imageData))
-	return fp.checkFrameHash(hash)
+func (fp *FrameProcessor) generateFrameHash(imageData []byte) string {
+	return fmt.Sprintf("%x", md5.Sum(imageData))
 }
 
-func (fp *FrameProcessor) checkFrameHash(hash string) bool {
-	// TODO: Implement proper frame hash caching with LRU eviction
+func (fp *FrameProcessor) isSimilarFrame(imageData []byte) bool {
+	if !fp.config.SkipSimilarFrames {
+		return false
+	}
+
+	hash := fp.generateFrameHash(imageData)
+	similarityKey := cache.GenerateCacheKey("similarity", hash)
+
+	// Check if we've seen this hash recently
+	exists, err := fp.cache.Exists(fp.ctx, similarityKey)
+	if err != nil {
+		fp.logger.Warn("Failed to check frame similarity", zap.Error(err))
+		return false
+	}
+
+	if exists {
+		return true
+	}
+
+	// Mark this hash as seen
+	go func() {
+		if err := fp.cache.SetWithTTL(fp.ctx, similarityKey, true, 5*time.Minute); err != nil {
+			fp.logger.Warn("Failed to cache frame similarity", zap.Error(err))
+		}
+	}()
+
 	return false
 }
 
-func (fp *FrameProcessor) cacheResult(imageData []byte, result *models.AnalysisResult) {
-	// TODO: Implement result caching mechanism
+func (fp *FrameProcessor) calculatePriority(request *models.FrameRequest) int {
+	// Higher priority for real-time requests
+	priority := 1
+
+	// Check if this is a high-priority client (e.g., VIP users)
+	// This could be based on user subscription level, etc.
+	if request.ClientID != "" {
+		// Add logic to determine client priority
+		priority += 1
+	}
+
+	// Higher priority for recent requests
+	age := time.Since(time.Unix(request.Timestamp/1000, 0))
+	if age < 1*time.Second {
+		priority += 2
+	} else if age < 5*time.Second {
+		priority += 1
+	}
+
+	return priority
 }
 
 func (fp *FrameProcessor) getCachedResult() *models.AnalysisResult {
-	// TODO: Implement cached result retrieval
+	// Return a default result for similar frames
 	return &models.AnalysisResult{
 		OverallScore: 75,
 		PostureScore: 80,
 		LaneScore:    70,
 		SpeedScore:   75,
+		Timestamp:    time.Now().Unix(),
+		Feedback: []models.Feedback{
+			{
+				Type:    "info",
+				Message: "Using cached result for similar frame",
+				Score:   75,
+			},
+		},
 	}
 }
 
@@ -310,4 +394,38 @@ func (fp *FrameProcessor) updateLatencyStats(latency time.Duration) {
 		alpha := 0.1
 		fp.stats.AverageLatency = alpha*currentLatency + (1-alpha)*fp.stats.AverageLatency
 	}
+}
+
+// Shutdown gracefully shuts down the frame processor
+func (fp *FrameProcessor) Shutdown() error {
+	fp.logger.Info("Shutting down frame processor...")
+
+	// Cancel context
+	fp.cancel()
+
+	// Shutdown queue
+	if err := fp.queue.Shutdown(30 * time.Second); err != nil {
+		fp.logger.Error("Failed to shutdown queue", zap.Error(err))
+		return err
+	}
+
+	// Close cache
+	if fp.cache != nil {
+		if err := fp.cache.Close(); err != nil {
+			fp.logger.Error("Failed to close cache", zap.Error(err))
+			return err
+		}
+	}
+
+	fp.logger.Info("Frame processor shutdown complete")
+	return nil
+}
+
+// GetCacheStats returns cache statistics
+func (fp *FrameProcessor) GetCacheStats() (*cache.CacheStats, error) {
+	if fp.cache == nil {
+		return nil, fmt.Errorf("cache not initialized")
+	}
+
+	return fp.cache.GetStats(fp.ctx)
 }

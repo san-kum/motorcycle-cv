@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - ML_BASE_URL=http://ml-service:5000
+      - RATE_LIMIT_RPS=100
+      - RATE_LIMIT_BURST=200
+      - MAX_REQUEST_SIZE=10485760
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-default-secret-key}
+      - ALLOWED_ORIGINS=*
+    depends_on:
+      - ml-service
+      - redis
+    networks:
+      - motorcycle-cv-network
+    restart: unless-stopped
+
+  ml-service:
+    build:
+      context: .
+      dockerfile: server/cv/Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./server/cv:/app
+    networks:
+      - motorcycle-cv-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - motorcycle-cv-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - backend
+    networks:
+      - motorcycle-cv-network
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+
+networks:
+  motorcycle-cv-network:
+    driver: bridge

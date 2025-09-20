@@ -199,7 +199,7 @@ func (h *StreamHandler) updateProcessingStats(duration time.Duration) {
 	if h.stats.AvgProcessTime == 0 {
 		h.stats.AvgProcessTime = currentTime
 	} else {
-		alpha := 0.1 // Smoothing factor
+		alpha := 0.1 
 		h.stats.AvgProcessTime = alpha*currentTime + (1-alpha)*h.stats.AvgProcessTime
 	}
 }

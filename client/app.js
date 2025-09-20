@@ -284,27 +284,45 @@ class MotorcycleFeedbackApp {
       this.socket.onopen = () => {
         console.log("WebSocket connected");
         this.updateStatus("Connected", "connected");
+        this.connectionRetries = 0;
         resolve();
       };
 
       this.socket.onmessage = (event) => {
-        this.handleServerMessage(JSON.parse(event.data));
+        try {
+          const message = JSON.parse(event.data);
+          this.handleServerMessage(message);
+        } catch (error) {
+          console.error("Failed to parse WebSocket message:", error);
+        }
       };
 
-      this.socket.onclose = () => {
-        console.log("WebSocket disconnected");
+      this.socket.onclose = (event) => {
+        console.log("WebSocket disconnected", event.code, event.reason);
         this.updateStatus("Disconnected", "disconnected");
-        if (this.isAnalyzing) {
-          this.showToast(
-            "Connection lost. Attempting to reconnect...",
-            "warning"
-          );
-          setTimeout(() => this.connectWebSocket(), 3000);
+        
+        if (this.isAnalyzing && event.code !== 1000) {
+          this.connectionRetries = (this.connectionRetries || 0) + 1;
+          
+          if (this.connectionRetries <= 5) {
+            this.showToast(
+              `Connection lost. Attempting to reconnect... (${this.connectionRetries}/5)`,
+              "warning"
+            );
+            setTimeout(() => this.connectWebSocket(), 3000 * this.connectionRetries);
+          } else {
+            this.showToast(
+              "Connection failed after multiple attempts. Please refresh the page.",
+              "error"
+            );
+            this.stopAnalysis();
+          }
         }
       };
 
       this.socket.onerror = (error) => {
         console.error("WebSocket error:", error);
+        this.updateStatus("Connection error", "disconnected");
         reject(error);
       };
 
@@ -329,6 +347,11 @@ class MotorcycleFeedbackApp {
   }
 
   captureAndSendFrame() {
+    // Check if we have a valid video stream
+    if (!this.videoElement || this.videoElement.readyState !== 4) {
+      return;
+    }
+
     this.setupCanvas();
 
     this.ctx.drawImage(
@@ -347,11 +370,15 @@ class MotorcycleFeedbackApp {
       timestamp: Date.now(),
     };
 
-    this.socket.send(JSON.stringify(message));
-    this.frameCount++;
-    this.updateSessionStats();
-
-    this.showAnalysisIndicator();
+    try {
+      this.socket.send(JSON.stringify(message));
+      this.frameCount++;
+      this.updateSessionStats();
+      this.showAnalysisIndicator();
+    } catch (error) {
+      console.error("Failed to send frame:", error);
+      this.addFeedback("Failed to send frame for analysis", "error");
+    }
   }
 
   handleServerMessage(message) {
@@ -369,7 +396,11 @@ class MotorcycleFeedbackApp {
         break;
       case "error":
         this.addFeedback(message.data.message, "error");
+        this.hideAnalysisIndicator();
         console.error("Server error:", message.data);
+        break;
+      case "pong":
+        // Handle ping-pong for connection health
         break;
       default:
         console.log("Unknown message type:", message.type);
@@ -377,19 +408,23 @@ class MotorcycleFeedbackApp {
   }
 
   updateAnalysisResults(data) {
+    // Update scores
     this.updateScore("overall", data.overall_score);
     this.updateScore("posture", data.posture_score);
     this.updateScore("lane", data.lane_score);
     this.updateScore("speed", data.speed_score);
 
+    // Update progress bars
     this.updateProgress("overall", data.overall_score);
     this.updateProgress("posture", data.posture_score);
     this.updateProgress("lane", data.lane_score);
     this.updateProgress("speed", data.speed_score);
 
+    // Update grade and trend
     this.updateGrade(data.overall_score);
     this.updateTrend(data.overall_score);
 
+    // Add to score history
     this.scoreHistory.push({
       timestamp: Date.now(),
       overall: data.overall_score,
@@ -402,10 +437,23 @@ class MotorcycleFeedbackApp {
       this.scoreHistory.shift();
     }
 
+    // Process feedback messages from the analysis result
+    if (data.feedback && Array.isArray(data.feedback)) {
+      data.feedback.forEach(feedback => {
+        this.addFeedback(
+          feedback.message || feedback.Message,
+          feedback.type || feedback.Type,
+          feedback.score || feedback.Score
+        );
+      });
+    }
+
+    // Handle visual feedback
     if (this.config.analysis.visualFeedback && data.annotations) {
       this.drawAnnotations(data.annotations);
     }
 
+    // Handle audio feedback
     if (this.config.analysis.audioFeedback) {
       this.playAudioFeedback(data.overall_score);
     }
@@ -503,6 +551,20 @@ class MotorcycleFeedbackApp {
   }
 
   addFeedback(message, type = "info", score = null) {
+    // Prevent duplicate messages by checking recent feedback
+    const recentFeedback = Array.from(this.feedbackList.children).slice(0, 3);
+    const isDuplicate = recentFeedback.some(feedback => {
+      const text = feedback.textContent.toLowerCase();
+      return text.includes(message.toLowerCase()) && 
+             (Date.now() - (this.lastFeedbackTime || 0)) < 2000; // Within 2 seconds
+    });
+
+    if (isDuplicate) {
+      return; // Skip duplicate feedback
+    }
+
+    this.lastFeedbackTime = Date.now();
+
     const noFeedback = this.feedbackList.querySelector(".no-feedback");
     if (noFeedback) {
       noFeedback.remove();

@@ -120,6 +120,7 @@ func (h *WebSocketHandler) processVideoFrame(conn *websocket.Conn, message *Clie
 		Timestamp: message.Timestamp,
 		ClientID:  h.getClientID(conn),
 	}
+
 	go func() {
 		result, err := h.processor.ProcessFrame(frameRequest)
 		if err != nil {
@@ -129,16 +130,6 @@ func (h *WebSocketHandler) processVideoFrame(conn *websocket.Conn, message *Clie
 		}
 
 		h.sendMessage(conn, writeMu, "analysis", result)
-
-		if len(result.Feedback) > 0 {
-			for _, feedback := range result.Feedback {
-				h.sendMessage(conn, writeMu, "feedback", map[string]any{
-					"message": feedback.Message,
-					"type":    feedback.Type,
-					"score":   feedback.Score,
-				})
-			}
-		}
 	}()
 }
 
